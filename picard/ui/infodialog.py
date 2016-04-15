@@ -22,8 +22,8 @@ import cgi
 import traceback
 from PyQt4 import QtGui, QtCore
 from picard import log
-from picard.coverartarchive import translate_caa_type
-from picard.coverartimage import CoverArtImageIOError
+from picard.coverart.utils import translate_caa_type
+from picard.coverart.image import CoverArtImageIOError
 from picard.util import format_time, encode_filename, bytes2human, webbrowser2
 from picard.ui import PicardDialog
 from picard.ui.ui_infodialog import Ui_InfoDialog
@@ -102,6 +102,7 @@ class InfoDialog(PicardDialog):
         if filename:
             webbrowser2.open("file://" + filename)
 
+
 class FileInfoDialog(InfoDialog):
 
     def __init__(self, file, parent=None):
@@ -167,3 +168,33 @@ class AlbumInfoDialog(InfoDialog):
         else:
             tabWidget.setTabText(tab_index, _("&Info"))
             self.tab_hide(tab)
+
+
+class ClusterInfoDialog(InfoDialog):
+
+    def __init__(self, cluster, parent=None):
+        InfoDialog.__init__(self, cluster, parent)
+        self.setWindowTitle(_("Cluster Info"))
+
+    def _display_info_tab(self):
+        tab = self.ui.info_tab
+        cluster = self.obj
+        tabWidget = self.ui.tabWidget
+        tab_index = tabWidget.indexOf(tab)
+        tabWidget.setTabText(tab_index, _("&Info"))
+        info = []
+        info.append("<b>%s</b> %s" % (_('Album:'),
+                                      unicode(QtCore.Qt.escape(cluster.metadata["album"]))))
+        info.append("<b>%s</b> %s" % (_('Artist:'),
+                                      unicode(QtCore.Qt.escape(cluster.metadata["albumartist"]))))
+        info.append("")
+        lines = []
+        for file in cluster.iterfiles(False):
+            m = file.metadata
+            artist = m["artist"] or m["albumartist"] or cluster.metadata["albumartist"]
+            lines.append(m["tracknumber"] + u" " +
+                         m["title"] + " - " + artist + " (" +
+                         m["~length"] + ")")
+        info.append("<b>%s</b><br />%s" % (_('Tracklist:'),
+                    '<br />'.join([unicode(QtCore.Qt.escape(s)).replace(' ', '&nbsp;') for s in lines])))
+        self.ui.info.setText('<br/>'.join(info))

@@ -26,8 +26,8 @@ import traceback
 
 from picard import config, log
 from picard.util import parse_amazon_url
-from picard.coverartproviders import CoverArtProvider
-from picard.coverartimage import CoverArtImage
+from picard.coverart.providers import CoverArtProvider
+from picard.coverart.image import CoverArtImage
 
 
 # amazon image file names are unique on all servers and constructed like
@@ -89,14 +89,13 @@ class CoverArtProviderAmazon(CoverArtProvider):
     """Use Amazon ASIN Musicbrainz relationships to get cover art"""
 
     NAME = "Amazon"
+    TITLE = N_(u'Amazon')
 
     def enabled(self):
-        if not config.setting['ca_provider_use_amazon']:
-            log.debug("Cover art from Amazon disabled by user")
-            return False
-        return not self.coverart.front_image_found
+        return (super(CoverArtProviderAmazon, self).enabled()
+                and not self.coverart.front_image_found)
 
-    def queue_downloads(self):
+    def queue_images(self):
         self.match_url_relations(('amazon asin', 'has_Amazon_ASIN'),
                                  self._queue_from_asin_relation)
         return CoverArtProvider.FINISHED
@@ -118,4 +117,4 @@ class CoverArtProviderAmazon(CoverArtProvider):
                 'serverid': serverInfo['id'],
                 'size': size
             }
-            self.queue_put(CoverArtImage("http://%s:%s" % (host, path)))
+            self.queue_put(CoverArtImage("http://%s%s" % (host, path)))

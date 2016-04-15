@@ -1,4 +1,23 @@
-﻿Version 1.3 - xxxx-xx-xx
+Version ? - ?
+  * Task: Update Picard logo/icons. (PICARD-760)
+
+Version 1.3.2 - 2015-01-07
+  * Bugfix: Fixed tags from filename dialog not opening on new installations
+
+Version 1.3.1 - 2014-12-20
+  * Bugfix: Picard should use the correct Accept header when talking to web services. (PICARD-273)
+  * Bugfix: Picard refuses to load files if any path component happens to be hidden (PICARD-589)
+  * Bugfix: ConfigUpgradeError: Error during config upgrade from version 0.0.0dev0 to 1.0.0final0 (PICARD-642)
+  * Bugfix: Windows installer sets working directory to %PROGRAMFILES%\MusicBrainz Picard\locale (PICARD-649)
+  * Bugfix: Last.fm plus tooltip help elements are all messed up (PICARD-655)
+  * Bugfix: Regression: Tagger script for cover art filename does not work anymore (PICARD-661)
+  * Bugfix: Retrieving collections causes AttributeError: release_list (PICARD-662)
+  * Bugfix: Artist name makes it impossible to save (PICARD-663)
+  * Improvement: Support the new pregap and data tracks (PICARD-658)
+  * Improvement: Set the originalyear tag when loading a release (PICARD-659)
+  * Improvement: Web service calls to ports 80 and 443 do not need explicit port specification. 443 should be automatically made https. (PICARD-665)
+
+Version 1.3 - 2014-10-20
  * The "About" window now displays the versions of libraries used by Picard
  * Picard now correctly handles matching of MP3 files saved in ID3v2.3 tags
    (which is the version that Microsoft Windows and iTunes both use).
@@ -53,6 +72,10 @@
    plugins registered with `PluginPriority.LOW` will run last
  * Add Standardise Performers plugin to convert e.g. Performer [piano and guitar] into
    Performer [piano] and Performer [guitar].
+ * Add support for release group cover art fallback (PICARD-418, PICARD-53)
+ * Add a clear button to search box
+ * Honour preferred release formats when matching AcoustIds (PICARD-631)
+ * Prevent ZeroDivisionError in some rare cases (PICARD-630)
 
 Version 1.2 - 2013-03-30
  * Picard now requires at least Python 2.6

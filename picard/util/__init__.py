@@ -23,13 +23,15 @@ import ntpath
 import re
 import sys
 import unicodedata
+if sys.platform == 'win32':
+	from ctypes import windll
+
 from time import time
 from PyQt4 import QtCore
-from encodings import rot_13
 from string import Template
 # Required for compatibility with lastfmplus which imports this from here rather than loading it direct.
 from functools import partial
-from collections import defaultdict
+from picard.const import MUSICBRAINZ_SERVERS
 
 
 class LockableObject(QtCore.QObject):
@@ -132,8 +134,11 @@ def replace_win32_incompat(string, repl=u"_"):
     """Replace win32 filename incompatible characters from ``string`` by
        ``repl``."""
     # Don't replace : with _ for windows drive
-    drive, rest = ntpath.splitdrive(string)
-    return drive + _re_win32_incompat.sub(repl, rest)
+    if sys.platform == "win32" and os.path.isabs(string):
+        drive, rest = ntpath.splitdrive(string)
+        return drive + _re_win32_incompat.sub(repl, rest)
+    else:
+        return _re_win32_incompat.sub(repl, string)
 
 
 _re_non_alphanum = re.compile(r'\W+', re.UNICODE)
@@ -202,10 +207,6 @@ _mbid_format = Template('$h{8}-$h$l-$h$l-$h$l-$h{12}').safe_substitute(h='[0-9a-
 _re_mbid_val = re.compile(_mbid_format)
 def mbid_validate(string):
     return _re_mbid_val.match(string)
-
-
-def rot13(input):
-    return u''.join(unichr(rot_13.encoding_map.get(ord(c), ord(c))) for c in input)
 
 
 def parse_amazon_url(url):
@@ -312,10 +313,28 @@ else:
     os_path_samefile = os.path.samefile
 
 
-def is_hidden_path(path):
-    """Returns true if at least one element of the path starts with a dot"""
-    path = os.path.normpath(path)  # we need to ignore /./ and /a/../ cases
-    return any(s.startswith('.') for s in path.split(os.sep))
+def is_hidden(filepath):
+    """Test whether a file or directory is hidden.
+    A file is considered hidden if it starts with a dot
+    on non-Windows systems or if it has the "hidden" flag
+    set on Windows."""
+    name = os.path.basename(os.path.abspath(filepath))
+    return (name.startswith('.') and sys.platform != 'win32') \
+        or _has_hidden_attribute(filepath)
+
+
+def _has_hidden_attribute(filepath):
+    if sys.platform != 'win32':
+        return False
+    # FIXME: On OSX detecting hidden files involves more
+    # than just checking for dot files, see
+    # https://stackoverflow.com/questions/284115/cross-platform-hidden-file-detection
+    try:
+        attrs = windll.kernel32.GetFileAttributesW(unicode(filepath))
+        assert attrs != -1
+        return bool(attrs & 2)
+    except (AttributeError, AssertionError):
+        return False
 
 
 def linear_combination_of_weights(parts):
@@ -329,13 +348,15 @@ def linear_combination_of_weights(parts):
     sum_of_products = 0.0
     for value, weight in parts:
         if value < 0.0:
-            raise ValueError, "Value must be greater than or equal to 0.0"
+            raise ValueError("Value must be greater than or equal to 0.0")
         if value > 1.0:
-            raise ValueError, "Value must be lesser than or equal to 1.0"
+            raise ValueError("Value must be lesser than or equal to 1.0")
         if weight < 0:
-            raise ValueError, "Weight must be greater than or equal to 0.0"
+            raise ValueError("Weight must be greater than or equal to 0.0")
         total += weight
         sum_of_products += value * weight
+    if total == 0.0:
+        return 0.0
     return sum_of_products / total
 
 
@@ -360,3 +381,33 @@ def album_artist_from_path(filename, album, artist):
             elif not artist and len(dirs) >= 2:
                 artist = dirs[-2]
     return album, artist
+
+
+def build_qurl(host, port=80, path=None, mblogin=False, queryargs=None):
+    """
+    Builds and returns a QUrl object from `host`, `port` and `path` and
+    automatically enables HTTPS if necessary.
+
+    Setting `mblogin` to True forces HTTPS on MusicBrainz' servers.
+
+    Encoded query arguments can be provided in `queryargs`, a
+    dictionary mapping field names to values.
+    """
+    url = QtCore.QUrl()
+    url.setHost(host)
+    url.setPort(port)
+    if (# Login is required and we're contacting an MB server
+        (mblogin and host in MUSICBRAINZ_SERVERS and port == 80) or
+        # Or we're contacting some other server via HTTPS.
+         port == 443):
+            url.setScheme("https")
+            url.setPort(443)
+    else:
+        url.setScheme("http")
+
+    if path is not None:
+        url.setPath(path)
+    if queryargs is not None:
+        for k, v in queryargs.iteritems():
+            url.addEncodedQueryItem(k, unicode(v))
+    return url

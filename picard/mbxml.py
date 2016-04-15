@@ -19,7 +19,8 @@
 
 import re
 from picard import config
-from picard.util import format_time, translate_from_sortname, parse_amazon_url
+from picard.util import (format_time, translate_from_sortname, parse_amazon_url,
+                         linear_combination_of_weights)
 from picard.const import RELEASE_FORMATS
 
 
@@ -70,11 +71,17 @@ def _parse_attributes(attrs, reltype):
 
 
 def _relations_to_metadata(relation_lists, m):
+    use_credited_as = not config.setting["standardize_artists"]
     for relation_list in relation_lists:
         if relation_list.target_type == 'artist':
             for relation in relation_list.relation:
                 artist = relation.artist[0]
                 value, valuesort = _translate_artist_node(artist)
+                has_translation = (value != artist.name[0].text)
+                if not has_translation and use_credited_as and 'target_credit' in relation.children:
+                    credited_as = relation.target_credit[0].text
+                    if credited_as:
+                        value, valuesort = credited_as, credited_as
                 reltype = relation.type
                 attribs = []
                 if 'attribute_list' in relation.children:
@@ -118,18 +125,35 @@ def _translate_artist_node(node):
         locale = config.setting["artist_locale"]
         lang = locale.split("_")[0]
         if "alias_list" in node.children:
-            found_primary = found_locale = False
+            result = (-1, (None, None))
             for alias in node.alias_list[0].alias:
-                if alias.attribs.get("type") != "Search hint" and "locale" in alias.attribs:
-                    if alias.locale == locale:
-                        transl, translsort = alias.text, alias.attribs["sort_name"]
-                        if alias.attribs.get("primary") == "primary":
-                            return (transl, translsort)
-                        found_locale = True
-                    elif alias.locale == lang and not (found_locale or found_primary):
-                        transl, translsort = alias.text, alias.attribs["sort_name"]
-                        if alias.attribs.get("primary") == "primary":
-                            found_primary = True
+                if alias.attribs.get("primary") != "primary":
+                    continue
+                if "locale" not in alias.attribs:
+                    continue
+                parts = []
+                if alias.locale == locale:
+                    score = 0.8
+                elif alias.locale == lang:
+                    score = 0.6
+                elif alias.locale.split("_")[0] == lang:
+                    score = 0.4
+                else:
+                    continue
+                parts.append((score, 5))
+                if alias.attribs.get("type") == u"Artist name":
+                    score = 0.8
+                elif alias.attribs.get("type") == u"Legal Name":
+                    score = 0.5
+                else:
+                    # as 2014/09/19, only Artist or Legal names should have the
+                    # Primary flag
+                    score = 0.0
+                parts.append((score, 5))
+                comb = linear_combination_of_weights(parts)
+                if comb > result[0]:
+                    result = (comb, (alias.text, alias.attribs["sort_name"]))
+            transl, translsort = result[1]
         if not transl:
             translsort = node.sort_name[0].text
             transl = translate_from_sortname(node.name[0].text, translsort)
@@ -143,13 +167,14 @@ def artist_credit_from_node(node):
     artistsort = ""
     artists = []
     artistssort = []
-    standardize_artists = config.setting["standardize_artists"]
+    use_credited_as = not config.setting["standardize_artists"]
     for credit in node.name_credit:
         a = credit.artist[0]
         translated, translated_sort = _translate_artist_node(a)
-        if translated != a.name[0].text:
+        has_translation = (translated != a.name[0].text)
+        if has_translation:
             name = translated
-        elif 'name' in credit.children and not standardize_artists:
+        elif use_credited_as and 'name' in credit.children:
             name = credit.name[0].text
         else:
             name = a.name[0].text
@@ -256,6 +281,17 @@ def recording_to_metadata(node, track):
             m['~recordingcomment'] = nodes[0].text
         elif name == 'artist_credit':
             artist_credit_to_metadata(nodes[0], m)
+            if 'name_credit' in nodes[0].children:
+                for name_credit in nodes[0].name_credit:
+                    if 'artist' in name_credit.children:
+                        for artist in name_credit.artist:
+                            trackartist = track.append_track_artist(artist.id)
+                            if 'tag_list' in artist.children:
+                                add_folksonomy_tags(artist.tag_list[0],
+                                                    trackartist)
+                            if 'user_tag_list' in artist.children:
+                                add_user_folksonomy_tags(artist.user_tag_list[0],
+                                                         trackartist)
         elif name == 'relation_list':
             _relations_to_metadata(nodes, m)
         elif name == 'tag_list':
@@ -266,6 +302,8 @@ def recording_to_metadata(node, track):
             add_isrcs_to_metadata(nodes[0], m)
         elif name == 'user_rating':
             m['~rating'] = nodes[0].text
+        elif name == 'video' and nodes[0].text == 'true':
+            m['~video'] = '1'
     m['~length'] = format_time(m.length)
 
 
@@ -281,7 +319,7 @@ def work_to_metadata(work, m):
     if 'language' in work.children:
         m.add_unique("language", work.language[0].text)
     if 'title' in work.children:
-        m.add("work", work.title[0].text)
+        m.add_unique("work", work.title[0].text)
     if 'relation_list' in work.children:
         _relations_to_metadata(work.relation_list, m)
 
@@ -316,6 +354,19 @@ def release_to_metadata(node, m, album=None):
             m['asin'] = nodes[0].text
         elif name == 'artist_credit':
             artist_credit_to_metadata(nodes[0], m, release=True)
+            # set tags from artists
+            if album is not None:
+                if 'name_credit' in nodes[0].children:
+                    for name_credit in nodes[0].name_credit:
+                        if 'artist' in name_credit.children:
+                            for artist in name_credit.artist:
+                                albumartist = album.append_album_artist(artist.id)
+                                if 'tag_list' in artist.children:
+                                    add_folksonomy_tags(artist.tag_list[0],
+                                                        albumartist)
+                                if 'user_tag_list' in artist.children:
+                                    add_user_folksonomy_tags(artist.user_tag_list[0],
+                                                             albumartist)
         elif name == 'date':
             m['date'] = nodes[0].text
         elif name == 'country':
@@ -349,6 +400,8 @@ def release_group_to_metadata(node, m, release_group=None):
             m['~releasegroupcomment'] = nodes[0].text
         elif name == 'first_release_date':
             m['originaldate'] = nodes[0].text
+            if m['originaldate']:
+                m['originalyear'] = m['originaldate'][:4]
         elif name == 'tag_list':
             add_folksonomy_tags(nodes[0], release_group)
         elif name == 'user_tag_list':

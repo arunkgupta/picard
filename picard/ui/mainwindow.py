@@ -19,13 +19,13 @@
 
 from PyQt4 import QtCore, QtGui
 
-import sys
 import os.path
 
 from picard import config, log
+from picard.album import Album
+from picard.cluster import Cluster
 from picard.file import File
 from picard.track import Track
-from picard.album import Album
 from picard.formats import supported_formats
 from picard.ui.coverartbox import CoverArtBox
 from picard.ui.itemviews import MainPanel
@@ -33,10 +33,15 @@ from picard.ui.metadatabox import MetadataBox
 from picard.ui.filebrowser import FileBrowser
 from picard.ui.tagsfromfilenames import TagsFromFileNamesDialog
 from picard.ui.options.dialog import OptionsDialog
-from picard.ui.infodialog import FileInfoDialog, AlbumInfoDialog
+from picard.ui.infodialog import FileInfoDialog, AlbumInfoDialog, ClusterInfoDialog
 from picard.ui.infostatus import InfoStatus
 from picard.ui.passworddialog import PasswordDialog
-from picard.ui.util import find_starting_directory
+from picard.ui.logview import LogView, HistoryView
+from picard.ui.util import (
+    find_starting_directory,
+    ButtonLineEdit,
+    MultiDirsSelectDialog
+)
 from picard.util import icontheme, webbrowser2, throttle, thread
 from picard.util.cdrom import discid, get_cdrom_drives
 from picard.plugin import ExtensionPoint
@@ -101,6 +106,9 @@ class MainWindow(QtGui.QMainWindow):
         self.cover_art_box = CoverArtBox(self)
         if not self.show_cover_art_action.isChecked():
             self.cover_art_box.hide()
+
+        self.logDialog = LogView()
+        self.historyDialog = HistoryView()
 
         bottomLayout = QtGui.QHBoxLayout()
         bottomLayout.setContentsMargins(0, 0, 0, 0)
@@ -387,6 +395,7 @@ class MainWindow(QtGui.QMainWindow):
         self.show_cover_art_action.triggered.connect(self.show_cover_art)
 
         self.search_action = QtGui.QAction(icontheme.lookup('system-search'), _(u"Search"), self)
+        self.search_action.setEnabled(False)
         self.search_action.triggered.connect(self.search)
 
         self.cd_lookup_action = QtGui.QAction(icontheme.lookup('media-optical'), _(u"Lookup &CD..."), self)
@@ -396,12 +405,14 @@ class MainWindow(QtGui.QMainWindow):
         self.cd_lookup_action.triggered.connect(self.tagger.lookup_cd)
 
         self.analyze_action = QtGui.QAction(icontheme.lookup('picard-analyze'), _(u"&Scan"), self)
+        self.analyze_action.setStatusTip(_(u"Use AcoustID audio fingerprint to identify the files by the actual music, even if they have no metadata"))
         self.analyze_action.setEnabled(False)
         # TR: Keyboard shortcut for "Analyze"
         self.analyze_action.setShortcut(QtGui.QKeySequence(_(u"Ctrl+Y")))
         self.analyze_action.triggered.connect(self.analyze)
 
         self.cluster_action = QtGui.QAction(icontheme.lookup('picard-cluster'), _(u"Cl&uster"), self)
+        self.cluster_action.setStatusTip(_(u"Cluster files into album clusters"))
         self.cluster_action.setEnabled(False)
         # TR: Keyboard shortcut for "Cluster"
         self.cluster_action.setShortcut(QtGui.QKeySequence(_(u"Ctrl+U")))
@@ -443,6 +454,7 @@ class MainWindow(QtGui.QMainWindow):
 
         self.tags_from_filenames_action = QtGui.QAction(_(u"Tags From &File Names..."), self)
         self.tags_from_filenames_action.triggered.connect(self.open_tags_from_filenames)
+        self.tags_from_filenames_action.setEnabled(False)
 
         self.open_collection_in_browser_action = QtGui.QAction(_(u"&Open My Collections in Browser"), self)
         self.open_collection_in_browser_action.triggered.connect(self.open_collection_in_browser)
@@ -458,7 +470,7 @@ class MainWindow(QtGui.QMainWindow):
         xmlws_manager.authenticationRequired.connect(self.show_password_dialog)
         xmlws_manager.proxyAuthenticationRequired.connect(self.show_proxy_dialog)
 
-        self.play_file_action = QtGui.QAction(icontheme.lookup('play-music'), _(u"&Play file"), self)
+        self.play_file_action = QtGui.QAction(icontheme.lookup('play-music'), _(u"Open in &Player"), self)
         self.play_file_action.setStatusTip(_(u"Play the file in your default media player"))
         self.play_file_action.setEnabled(False)
         self.play_file_action.triggered.connect(self.play_file)
@@ -477,10 +489,14 @@ class MainWindow(QtGui.QMainWindow):
     def toggle_tag_saving(self, checked):
         config.setting["dont_write_tags"] = not checked
 
-    def open_tags_from_filenames(self):
+    def get_selected_or_unmatched_files(self):
         files = self.tagger.get_files_from_objects(self.selected_objects)
         if not files:
             files = self.tagger.unmatched_files.files
+        return files
+
+    def open_tags_from_filenames(self):
+        files = self.get_selected_or_unmatched_files()
         if files:
             dialog = TagsFromFileNamesDialog(files, self)
             dialog.exec_()
@@ -598,8 +614,9 @@ class MainWindow(QtGui.QMainWindow):
         self.search_combo.addItem(_(u"Artist"), "artist")
         self.search_combo.addItem(_(u"Track"), "track")
         hbox.addWidget(self.search_combo, 0)
-        self.search_edit = QtGui.QLineEdit(search_panel)
-        self.search_edit.returnPressed.connect(self.search)
+        self.search_edit = ButtonLineEdit(search_panel)
+        self.search_edit.returnPressed.connect(self.trigger_search_action)
+        self.search_edit.textChanged.connect(self.enable_search)
         hbox.addWidget(self.search_edit, 0)
         self.search_button = QtGui.QToolButton(search_panel)
         self.search_button.setAutoRaise(True)
@@ -642,6 +659,17 @@ class MainWindow(QtGui.QMainWindow):
         """Enable/disable the 'Cluster' action."""
         self.cluster_action.setEnabled(enabled)
 
+    def enable_search(self):
+        """Enable/disable the 'Search' action."""
+        if self.search_edit.text():
+            self.search_action.setEnabled(True)
+        else:
+            self.search_action.setEnabled(False)
+
+    def trigger_search_action(self):
+        if self.search_action.isEnabled():
+            self.search_action.trigger()
+
     def search(self):
         """Search for album, artist or track on the MusicBrainz website."""
         text = self.search_edit.text()
@@ -676,36 +704,27 @@ class MainWindow(QtGui.QMainWindow):
             if directory:
                 dir_list.append(directory)
         else:
-            # Use a custom file selection dialog to allow the selection of multiple directories
-            file_dialog = QtGui.QFileDialog(self, "", current_directory)
-            file_dialog.setFileMode(QtGui.QFileDialog.DirectoryOnly)
-            if sys.platform == "darwin":  # The native dialog doesn't allow selecting >1 directory
-                file_dialog.setOption(QtGui.QFileDialog.DontUseNativeDialog)
-            tree_view = file_dialog.findChild(QtGui.QTreeView)
-            tree_view.setSelectionMode(QtGui.QAbstractItemView.ExtendedSelection)
-            list_view = file_dialog.findChild(QtGui.QListView, "listView")
-            list_view.setSelectionMode(QtGui.QAbstractItemView.ExtendedSelection)
-
+            file_dialog = MultiDirsSelectDialog(self, "", current_directory)
             if file_dialog.exec_() == QtGui.QDialog.Accepted:
                 dir_list = file_dialog.selectedFiles()
 
-        if len(dir_list) == 1:
-            config.persist["current_directory"] = dir_list[0]
-            self.set_statusbar_message(
-                N_("Adding directory: '%(directory)s' ..."),
-                {'directory': dir_list[0]}
-            )
-        elif len(dir_list) > 1:
-            (parent, dir) = os.path.split(str(dir_list[0]))
+        dir_count = len(dir_list)
+        if dir_count:
+            parent = os.path.dirname(dir_list[0])
             config.persist["current_directory"] = parent
-            self.set_statusbar_message(
-                N_("Adding multiple directories from '%(directory)s' ..."),
-                {'directory': parent}
-            )
+            if dir_count > 1:
+                self.set_statusbar_message(
+                    N_("Adding multiple directories from '%(directory)s' ..."),
+                    {'directory': parent}
+                )
+            else:
+                self.set_statusbar_message(
+                    N_("Adding directory: '%(directory)s' ..."),
+                    {'directory': dir_list[0]}
+                )
 
-        for directory in dir_list:
-            directory = unicode(directory)
-            self.tagger.add_directory(directory)
+            for directory in dir_list:
+                self.tagger.add_directory(directory)
 
     def show_about(self):
         self.show_options("about")
@@ -718,12 +737,14 @@ class MainWindow(QtGui.QMainWindow):
         webbrowser2.goto('documentation')
 
     def show_log(self):
-        from picard.ui.logview import LogView
-        LogView(self).show()
+        self.logDialog.show()
+        self.logDialog.raise_()
+        self.logDialog.activateWindow()
 
     def show_history(self):
-        from picard.ui.logview import HistoryView
-        HistoryView(self).show()
+        self.historyDialog.show()
+        self.historyDialog.raise_()
+        self.historyDialog.activateWindow()
 
     def open_bug_report(self):
         webbrowser2.goto('troubleshooting')
@@ -774,6 +795,9 @@ class MainWindow(QtGui.QMainWindow):
         if isinstance(self.selected_objects[0], Album):
             album = self.selected_objects[0]
             dialog = AlbumInfoDialog(album, self)
+        elif isinstance(self.selected_objects[0], Cluster):
+            cluster = self.selected_objects[0]
+            dialog = ClusterInfoDialog(cluster, self)
         else:
             file = self.tagger.get_files_from_objects(self.selected_objects)[0]
             dialog = FileInfoDialog(file, self)
@@ -781,6 +805,7 @@ class MainWindow(QtGui.QMainWindow):
 
     def cluster(self):
         self.tagger.cluster(self.selected_objects)
+        self.update_actions()
 
     def refresh(self):
         self.tagger.refresh(self.selected_objects)
@@ -825,6 +850,8 @@ class MainWindow(QtGui.QMainWindow):
         self.play_file_action.setEnabled(have_files)
         self.open_folder_action.setEnabled(have_files)
         self.cut_action.setEnabled(bool(self.selected_objects))
+        files = self.get_selected_or_unmatched_files()
+        self.tags_from_filenames_action.setEnabled(bool(files))
 
     def update_selection(self, objects=None):
         if self.ignore_selection_changes:
@@ -887,7 +914,6 @@ class MainWindow(QtGui.QMainWindow):
         """Show/hide the cover art box."""
         if self.show_cover_art_action.isChecked():
             self.cover_art_box.show()
-            self.metadata_box.resize_columns()
         else:
             self.cover_art_box.hide()
 
@@ -903,8 +929,17 @@ class MainWindow(QtGui.QMainWindow):
             self.file_browser.hide()
 
     def show_password_dialog(self, reply, authenticator):
-        dialog = PasswordDialog(authenticator, reply, parent=self)
-        dialog.exec_()
+        if reply.url().host() == config.setting['server_host']:
+            ret = QtGui.QMessageBox.question(self,
+                _(u"Authentication Required"),
+                _(u"Picard needs authorization to access your personal data on the MusicBrainz server. Would you like to log in now?"),
+                QtGui.QMessageBox.Yes | QtGui.QMessageBox.No,
+                QtGui.QMessageBox.Yes)
+            if ret == QtGui.QMessageBox.Yes:
+                pass
+        else:
+            dialog = PasswordDialog(authenticator, reply, parent=self)
+            dialog.exec_()
 
     def show_proxy_dialog(self, proxy, authenticator):
         dialog = ProxyDialog(authenticator, proxy, parent=self)

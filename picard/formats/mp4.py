@@ -19,7 +19,7 @@
 
 from mutagen.mp4 import MP4, MP4Cover
 from picard import config, log
-from picard.coverartimage import TagCoverArtImage, CoverArtImageError
+from picard.coverart.image import TagCoverArtImage, CoverArtImageError
 from picard.file import File
 from picard.metadata import Metadata
 from picard.util import encode_filename
@@ -102,6 +102,7 @@ class MP4File(File):
         "----:com.apple.iTunes:LANGUAGE": "language",
         "----:com.apple.iTunes:ARTISTS": "artists",
         "----:com.apple.iTunes:WORK": "work",
+        "----:com.apple.iTunes:initialkey": "key",
     }
     __r_freeform_tags = dict([(v, k) for k, v in __freeform_tags.iteritems()])
 
@@ -216,3 +217,8 @@ class MP4File(File):
             or name in self.__r_freeform_tags\
             or name in self.__other_supported_tags\
             or name.startswith('lyrics:')
+
+    def _info(self, metadata, file):
+        super(MP4File, self)._info(metadata, file)
+        if hasattr(file.info, 'codec_description') and file.info.codec_description:
+            metadata['~format'] = "%s (%s)" % (metadata['~format'], file.info.codec_description)

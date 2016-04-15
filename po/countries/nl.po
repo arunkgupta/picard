@@ -1,14 +1,14 @@
 # 
 # Translators:
 # Maurits Meulenbelt <mfmeulenbelt@gmail.com>, 2012
-# Maurits Meulenbelt <mfmeulenbelt@gmail.com>, 2014
+# Maurits Meulenbelt <mfmeulenbelt@gmail.com>, 2014-2015
 # Nikolai Prokoschenko <nikolai@prokoschenko.de>, 2011
 msgid ""
 msgstr ""
 "Project-Id-Version: MusicBrainz\n"
-"PO-Revision-Date: 2014-01-12 13:13+0000\n"
+"PO-Revision-Date: 2015-03-27 22:34+0000\n"
 "Last-Translator: Maurits Meulenbelt <mfmeulenbelt@gmail.com>\n"
-"Language-Team: Dutch (http://www.transifex.com/projects/p/musicbrainz/language/nl/)\n"
+"Language-Team: Dutch (http://www.transifex.com/musicbrainz/musicbrainz/language/nl/)\n"
 "MIME-Version: 1.0\n"
 "Content-Type: text/plain; charset=UTF-8\n"
 "Content-Transfer-Encoding: 8bit\n"
@@ -93,7 +93,7 @@ msgstr "Azerbeidzjan"
 #. iso.code:BS
 #: DBarea JOIN iso_3166_1 iso on iso.area = area.id/area.name:16
 msgid "Bahamas"
-msgstr "Bahama's"
+msgstr "Bahama’s"
 
 #. iso.code:BH
 #: DBarea JOIN iso_3166_1 iso on iso.area = area.id/area.name:17
@@ -394,6 +394,11 @@ msgstr "Falklandeilanden"
 #: DBarea JOIN iso_3166_1 iso on iso.area = area.id/area.name:70
 msgid "Faroe Islands"
 msgstr "Faeröer"
+
+#. iso.code:FM
+#: DBarea JOIN iso_3166_1 iso on iso.area = area.id/area.name:139
+msgid "Federated States of Micronesia"
+msgstr "Federale Staten van Micronesië"
 
 #. iso.code:FJ
 #: DBarea JOIN iso_3166_1 iso on iso.area = area.id/area.name:71
@@ -740,11 +745,6 @@ msgstr "Mayotte"
 msgid "Mexico"
 msgstr "Mexico"
 
-#. iso.code:FM
-#: DBarea JOIN iso_3166_1 iso on iso.area = area.id/area.name:139
-msgid "Micronesia, Federated States of"
-msgstr "Micronesia, Federale Staten van"
-
 #. iso.code:MD
 #: DBarea JOIN iso_3166_1 iso on iso.area = area.id/area.name:140
 msgid "Moldova"
@@ -937,7 +937,7 @@ msgstr "Roemenië"
 
 #. iso.code:RU
 #: DBarea JOIN iso_3166_1 iso on iso.area = area.id/area.name:176
-msgid "Russian Federation"
+msgid "Russia"
 msgstr "Rusland"
 
 #. iso.code:RW
@@ -1198,7 +1198,7 @@ msgstr "Turks- en Caicoseilanden"
 #. iso.code:TV
 #: DBarea JOIN iso_3166_1 iso on iso.area = area.id/area.name:217
 msgid "Tuvalu"
-msgstr "Tuvaluaans"
+msgstr "Tuvalu"
 
 #. iso.code:VI
 #: DBarea JOIN iso_3166_1 iso on iso.area = area.id/area.name:231
@@ -1252,7 +1252,7 @@ msgstr "Vanuatu"
 
 #. iso.code:VA
 #: DBarea JOIN iso_3166_1 iso on iso.area = area.id/area.name:227
-msgid "Vatican City State (Holy See)"
+msgid "Vatican City"
 msgstr "Vaticaanstad"
 
 #. iso.code:VE

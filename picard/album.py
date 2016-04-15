@@ -46,6 +46,11 @@ from picard.const import VARIOUS_ARTISTS_ID
 register_album_metadata_processor(coverart)
 
 
+class AlbumArtist(DataObject):
+    def __init__(self, id):
+        DataObject.__init__(self, id)
+
+
 class Album(DataObject, Item):
 
     release_group_loaded = QtCore.pyqtSignal()
@@ -65,6 +70,7 @@ class Album(DataObject, Item):
         self.unmatched_files = Cluster(_("Unmatched Files"), special=True, related_album=self, hide_if_empty=True)
         self.errors = []
         self.status = None
+        self._album_artists = []
 
     def __repr__(self):
         return '<Album %s %r>' % (self.id, self.metadata[u"album"])
@@ -76,6 +82,17 @@ class Album(DataObject, Item):
         if not save:
             for file in self.unmatched_files.iterfiles():
                 yield file
+
+    def append_album_artist(self, id):
+        """Append artist id to the list of album artists
+        and return an AlbumArtist instance"""
+        album_artist = AlbumArtist(id)
+        self._album_artists.append(album_artist)
+        return album_artist
+
+    def get_album_artists(self):
+        """Returns the list of album artists (as AlbumArtist objects)"""
+        return self._album_artists
 
     def _parse_release(self, document):
         log.debug("Loading release %r ...", self.id)
@@ -125,7 +142,7 @@ class Album(DataObject, Item):
         # Add album to collections
         if "collection_list" in release_node.children:
             for node in release_node.collection_list[0].collection:
-                if node.editor[0].text.lower() == config.setting["username"].lower():
+                if node.editor[0].text.lower() == config.persist["oauth_username"].lower():
                     if node.id not in user_collections:
                         user_collections[node.id] = \
                             Collection(node.id, node.name[0].text, node.release_list[0].count)
@@ -209,35 +226,28 @@ class Album(DataObject, Item):
                 mm = Metadata()
                 mm.copy(self._new_metadata)
                 medium_to_metadata(medium_node, mm)
-                totalalbumtracks += int(mm["totaltracks"])
+                discpregap = False
 
                 for dj in djmix_ars.get(mm["discnumber"], []):
                     mm.add("djmixer", dj)
 
-                for track_node in medium_node.track_list[0].track:
-                    track = Track(track_node.recording[0].id, self)
-                    self._new_tracks.append(track)
-
-                    # Get track metadata
-                    tm = track.metadata
-                    tm.copy(mm)
-                    track_to_metadata(track_node, track)
+                if "pregap" in medium_node.children:
+                    discpregap = True
                     absolutetracknumber += 1
-                    tm["~absolutetracknumber"] = absolutetracknumber
-                    track._customize_metadata()
+                    track = self._finalize_loading_track(medium_node.pregap[0], mm, artists, va, absolutetracknumber, discpregap)
+                    track.metadata['~pregap'] = "1"
 
-                    self._new_metadata.length += tm.length
-                    artists.add(tm["artist"])
-                    if va:
-                        tm["compilation"] = "1"
+                for track_node in medium_node.track_list[0].track:
+                    absolutetracknumber += 1
+                    track = self._finalize_loading_track(track_node, mm, artists, va, absolutetracknumber, discpregap)
 
-                    # Run track metadata plugins
-                    try:
-                        run_track_metadata_processors(self, tm, self._release_node, track_node)
-                    except:
-                        self.error_append(traceback.format_exc())
+                if "data_track_list" in medium_node.children:
+                    for track_node in medium_node.data_track_list[0].track:
+                        absolutetracknumber += 1
+                        track = self._finalize_loading_track(track_node, mm, artists, va, absolutetracknumber, discpregap)
+                        track.metadata['~datatrack'] = "1"
 
-            totalalbumtracks = str(totalalbumtracks)
+            totalalbumtracks = str(absolutetracknumber)
 
             for track in self._new_tracks:
                 track.metadata["~totalalbumtracks"] = totalalbumtracks
@@ -290,6 +300,32 @@ class Album(DataObject, Item):
             for func in self._after_load_callbacks:
                 func()
             self._after_load_callbacks = []
+
+    def _finalize_loading_track(self, track_node, metadata, artists, va, absolutetracknumber, discpregap):
+        track = Track(track_node.recording[0].id, self)
+        self._new_tracks.append(track)
+
+        # Get track metadata
+        tm = track.metadata
+        tm.copy(metadata)
+        track_to_metadata(track_node, track)
+        track.metadata["~absolutetracknumber"] = absolutetracknumber
+        track._customize_metadata()
+
+        self._new_metadata.length += tm.length
+        artists.add(tm["artist"])
+        if va:
+            tm["compilation"] = "1"
+        if discpregap:
+            tm["~discpregap"] = "1"
+
+        # Run track metadata plugins
+        try:
+            run_track_metadata_processors(self, tm, self._release_node, track_node)
+        except:
+            self.error_append(traceback.format_exc())
+
+        return track
 
     def load(self, priority=False, refresh=False):
         if self._requests:
@@ -444,7 +480,7 @@ class Album(DataObject, Item):
         if not self.tracks:
             return False
         for track in self.tracks:
-            if track.num_linked_files != 1:
+            if not track.is_complete():
                 return False
         else:
             return True

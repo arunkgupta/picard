@@ -109,6 +109,8 @@ class MainPanel(QtGui.QSplitter):
         TreeItem.window = window
         TreeItem.base_color = self.palette().base().color()
         TreeItem.text_color = self.palette().text().color()
+        TreeItem.text_color_secondary = self.palette() \
+            .brush(QtGui.QPalette.Disabled, QtGui.QPalette.Text).color()
         TrackItem.track_colors = {
             File.NORMAL: config.setting["color_saved"],
             File.CHANGED: TreeItem.text_color,
@@ -141,7 +143,9 @@ class MainPanel(QtGui.QSplitter):
         AlbumItem.icon_cd_saved_modified = icontheme.lookup('media-optical-saved-modified',
                                                             icontheme.ICON_SIZE_MENU)
         AlbumItem.icon_error = icontheme.lookup('media-optical-error', icontheme.ICON_SIZE_MENU)
-        TrackItem.icon_note = QtGui.QIcon(":/images/note.png")
+        TrackItem.icon_audio = QtGui.QIcon(":/images/track-audio.png")
+        TrackItem.icon_video = QtGui.QIcon(":/images/track-video.png")
+        TrackItem.icon_data = QtGui.QIcon(":/images/track-data.png")
         FileItem.icon_file = QtGui.QIcon(":/images/file.png")
         FileItem.icon_file_pending = QtGui.QIcon(":/images/file-pending.png")
         FileItem.icon_error = icontheme.lookup('dialog-error', icontheme.ICON_SIZE_MENU)
@@ -232,6 +236,9 @@ class BaseTreeView(QtGui.QTreeWidget):
         self.expand_all_action.triggered.connect(self.expandAll)
         self.collapse_all_action = QtGui.QAction(_("&Collapse all"), self)
         self.collapse_all_action.triggered.connect(self.collapseAll)
+        self.select_all_action = QtGui.QAction(_("Select &all"), self)
+        self.select_all_action.triggered.connect(self.selectAll)
+        self.select_all_action.setShortcut(QtGui.QKeySequence(_(u"Ctrl+A")))
         self.doubleClicked.connect(self.activate_item)
 
     def contextMenuEvent(self, event):
@@ -256,6 +263,8 @@ class BaseTreeView(QtGui.QTreeWidget):
             if isinstance(obj, NonAlbumTrack):
                 menu.addAction(self.window.refresh_action)
         elif isinstance(obj, Cluster):
+            if can_view_info:
+                menu.addAction(self.window.view_info_action)
             menu.addAction(self.window.browser_lookup_action)
             menu.addSeparator()
             menu.addAction(self.window.autotag_action)
@@ -383,6 +392,7 @@ class BaseTreeView(QtGui.QTreeWidget):
             menu.addAction(self.expand_all_action)
             menu.addAction(self.collapse_all_action)
 
+        menu.addAction(self.select_all_action)
         menu.exec_(event.globalPos())
         event.accept()
 
@@ -703,9 +713,17 @@ class TrackItem(TreeItem):
             icon = FileItem.decide_file_icon(file)
             self.takeChildren()
         else:
-            color = TreeItem.text_color
+            if track.ignored_for_completeness():
+                color = TreeItem.text_color_secondary
+            else:
+                color = TreeItem.text_color
             bgcolor = get_match_color(1, TreeItem.base_color)
-            icon = TrackItem.icon_note
+            if track.is_video():
+                icon = TrackItem.icon_video
+            elif track.is_data():
+                icon = TrackItem.icon_data
+            else:
+                icon = TrackItem.icon_audio
             oldnum = self.childCount()
             newnum = track.num_linked_files
             if oldnum > newnum:  # remove old items

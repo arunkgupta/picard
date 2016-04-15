@@ -25,7 +25,7 @@ from picard.dataobj import DataObject
 from picard.util.textencoding import asciipunct
 from picard.mbxml import recording_to_metadata
 from picard.script import ScriptParser
-from picard.const import VARIOUS_ARTISTS_ID
+from picard.const import VARIOUS_ARTISTS_ID, SILENCE_TRACK_TITLE, DATA_TRACK_TITLE
 from picard.ui.item import Item
 import traceback
 
@@ -37,6 +37,11 @@ _TRANSLATE_TAGS = {
 }
 
 
+class TrackArtist(DataObject):
+    def __init__(self, id):
+        DataObject.__init__(self, id)
+
+
 class Track(DataObject, Item):
 
     def __init__(self, id, album=None):
@@ -45,6 +50,7 @@ class Track(DataObject, Item):
         self.linked_files = []
         self.num_linked_files = 0
         self.metadata = Metadata()
+        self._track_artists = []
 
     def __repr__(self):
         return '<Track %s %r>' % (self.id, self.metadata["title"])
@@ -113,12 +119,48 @@ class Track(DataObject, Item):
             return u"%s%s  %s" % (prefix, m['tracknumber'].zfill(2), m['title'])
         return m[column]
 
+    def is_video(self):
+        return self.metadata['~video'] == '1'
+
+    def is_pregap(self):
+        return self.metadata['~pregap'] == '1'
+
+    def is_data(self):
+        return self.metadata['~datatrack'] == '1'
+
+    def is_silence(self):
+        return self.metadata['~silence'] == '1'
+
+    def is_complete(self):
+        return self.ignored_for_completeness() or self.num_linked_files == 1
+
+    def ignored_for_completeness(self):
+        if (config.setting['completeness_ignore_videos'] and self.is_video()) \
+            or (config.setting['completeness_ignore_pregap'] and self.is_pregap()) \
+            or (config.setting['completeness_ignore_data'] and self.is_data()) \
+            or (config.setting['completeness_ignore_silence'] and self.is_silence()):
+            return True
+        return False
+
+    def append_track_artist(self, id):
+        """Append artist id to the list of track artists
+        and return an TrackArtist instance"""
+        track_artist = TrackArtist(id)
+        self._track_artists.append(track_artist)
+        return track_artist
+
     def _customize_metadata(self):
         tm = self.metadata
 
         # Custom VA name
         if tm['musicbrainz_artistid'] == VARIOUS_ARTISTS_ID:
             tm['artistsort'] = tm['artist'] = config.setting['va_name']
+
+        if tm['title'] == DATA_TRACK_TITLE:
+            tm['~datatrack'] = '1'
+
+        if tm['title'] == SILENCE_TRACK_TITLE:
+            tm['~silence'] = '1'
 
         if config.setting['folksonomy_tags']:
             self._convert_folksonomy_tags_to_genre()
@@ -133,6 +175,16 @@ class Track(DataObject, Item):
         self.merge_folksonomy_tags(tags, self.album.folksonomy_tags)
         if self.album.release_group:
             self.merge_folksonomy_tags(tags, self.album.release_group.folksonomy_tags)
+        if not tags and config.setting['artists_tags']:
+            # For compilations use each track's artists to look up tags
+            if self.metadata['musicbrainz_albumartistid'] == VARIOUS_ARTISTS_ID:
+                for artist in self._track_artists:
+                    self.merge_folksonomy_tags(tags, artist.folksonomy_tags)
+            else:
+                for artist in self.album.get_album_artists():
+                    self.merge_folksonomy_tags(tags, artist.folksonomy_tags)
+        # Ignore tags with zero or lower score
+        tags = dict((name, count) for name, count in tags.items() if count > 0)
         if not tags:
             return
         # Convert counts to values from 0 to 100
@@ -144,10 +196,10 @@ class Track(DataObject, Item):
         # And generate the genre metadata tag
         maxtags = config.setting['max_tags']
         minusage = config.setting['min_tag_usage']
-        ignore_tags = config.setting['ignore_tags']
+        ignore_tags = self._get_ignored_folksonomy_tags()
         genre = []
         for usage, name in taglist[:maxtags]:
-            if name in ignore_tags:
+            if name.lower() in ignore_tags:
                 continue
             if usage < minusage:
                 break
@@ -157,6 +209,13 @@ class Track(DataObject, Item):
         if join_tags:
             genre = [join_tags.join(genre)]
         self.metadata['genre'] = genre
+
+    def _get_ignored_folksonomy_tags(self):
+        tags = []
+        ignore_tags = config.setting['ignore_tags']
+        if ignore_tags:
+            tags = [s.strip().lower() for s in ignore_tags.split(',')]
+        return tags
 
 
 class NonAlbumTrack(Track):

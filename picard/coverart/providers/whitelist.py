@@ -25,8 +25,8 @@
 import traceback
 
 from picard import config, log
-from picard.coverartproviders import CoverArtProvider
-from picard.coverartimage import CoverArtImage
+from picard.coverart.providers import CoverArtProvider
+from picard.coverart.image import CoverArtImage
 
 
 class CoverArtProviderWhitelist(CoverArtProvider):
@@ -35,14 +35,13 @@ class CoverArtProviderWhitelist(CoverArtProvider):
     cover art"""
 
     NAME = "Whitelist"
+    TITLE = N_(u'Whitelist')
 
     def enabled(self):
-        if not config.setting['ca_provider_use_whitelist']:
-            log.debug("Cover art from white list disabled by user")
-            return False
-        return not self.coverart.front_image_found
+        return (super(CoverArtProviderWhitelist, self).enabled()
+                and not self.coverart.front_image_found)
 
-    def queue_downloads(self):
+    def queue_images(self):
         self.match_url_relations(('cover art link', 'has_cover_art_at'),
                                  self._queue_from_whitelist)
         return CoverArtProvider.FINISHED

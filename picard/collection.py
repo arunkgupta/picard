@@ -107,6 +107,8 @@ def load_user_collections(callback=None):
             new_collections = set()
 
             for node in collection_list.collection:
+                if node.attribs.get(u"entity_type") != u"release":
+                    continue
                 new_collections.add(node.id)
                 collection = user_collections.get(node.id)
                 if collection is None:
@@ -121,7 +123,7 @@ def load_user_collections(callback=None):
         if callback:
             callback()
 
-    if config.setting["username"] and config.setting["password"]:
+    if tagger.xmlws.oauth_manager.is_authorized():
         tagger.xmlws.get_collection_list(partial(request_finished))
     else:
         user_collections.clear()

@@ -17,14 +17,11 @@
 # along with this program; if not, write to the Free Software
 # Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
 
-from mutagen import version_string as mutagen_version
-from PyQt4.QtCore import PYQT_VERSION_STR as pyqt_version
-from picard import PICARD_FANCY_VERSION_STR
 from picard.const import PICARD_URLS
 from picard.formats import supported_formats
 from picard.ui.options import OptionsPage, register_options_page
 from picard.ui.ui_options_about import Ui_AboutOptionsPage
-from picard.disc import discid_version
+from picard.util import versions
 
 
 class AboutOptionsPage(OptionsPage):
@@ -42,13 +39,10 @@ class AboutOptionsPage(OptionsPage):
 
     def load(self):
         args = {
-            "version": PICARD_FANCY_VERSION_STR,
-            "mutagen-version": mutagen_version,
-            "pyqt-version": pyqt_version,
-            "discid-version": discid_version or _("is not installed"),
             "picard-doc-url": PICARD_URLS['home'],
             "picard-donate-url": PICARD_URLS['donate'],
         }
+        args.update(versions.as_dict(i18n=True))
 
         formats = []
         for exts, name in supported_formats():
@@ -63,20 +57,22 @@ class AboutOptionsPage(OptionsPage):
         else:
             args["translator-credits"] = ""
 
+        args['third_parties_versions'] = '<br />'.join([u"%s %s" %
+                                                        (versions.version_name(name), value) for name, value
+                                                        in versions.as_dict(i18n=True).items()
+                                                        if name != 'version'])
         text = _(u"""<p align="center"><span style="font-size:15px;font-weight:bold;">MusicBrainz Picard</span><br/>
 Version %(version)s</p>
 <p align="center"><small>
-PyQt %(pyqt-version)s<br/>
-Mutagen %(mutagen-version)s<br/>
-Discid %(discid-version)s
+%(third_parties_versions)s
 </small></p>
 <p align="center"><strong>Supported formats</strong><br/>%(formats)s</p>
 <p align="center"><strong>Please donate</strong><br/>
 Thank you for using Picard. Picard relies on the MusicBrainz database, which is operated by the MetaBrainz Foundation with the help of thousands of volunteers. If you like this application please consider donating to the MetaBrainz Foundation to keep the service running.</p>
 <p align="center"><a href="%(picard-donate-url)s">Donate now!</a></p>
 <p align="center"><strong>Credits</strong><br/>
-<small>Copyright © 2004-2014 Robert Kaye, Lukáš Lalinský and others%(translator-credits)s</small></p>
-<p align="center"><a href="%(picard-doc-url)s">%(picard-doc-url)s</a></p>
+<small>Copyright © 2004-2015 Robert Kaye, Lukáš Lalinský, Laurent Monin and others%(translator-credits)s</small></p>
+<p align="center"><strong>Official website</strong><br/><a href="%(picard-doc-url)s">%(picard-doc-url)s</a></p>
 """) % args
         self.ui.label.setOpenExternalLinks(True)
         self.ui.label.setText(text)

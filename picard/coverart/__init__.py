@@ -22,14 +22,16 @@
 # along with this program; if not, write to the Free Software
 # Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
 
-from picard.coverartproviders import cover_art_providers, CoverArtProvider
+
+import traceback
+
+from picard.coverart.providers import cover_art_providers, CoverArtProvider
 
 from functools import partial
 from picard import config, log
-from picard.coverartimage import (CoverArtImageIOError,
-                                  CoverArtImageIdentificationError)
+from picard.coverart.image import (CoverArtImageIOError,
+                                   CoverArtImageIdentificationError)
 from PyQt4.QtCore import QObject
-
 
 
 class CoverArt:
@@ -47,12 +49,41 @@ class CoverArt:
     def retrieve(self):
         """Retrieve available cover art images for the release"""
         if (not config.setting["save_images_to_tags"] and not
-            config.setting["save_images_to_files"]):
+                config.setting["save_images_to_files"]):
             log.debug("Cover art disabled by user options.")
             return
 
         self.providers = cover_art_providers()
-        self.download_next_in_queue()
+        self.next_in_queue()
+
+    def _set_metadata(self, coverartimage, data):
+        try:
+            coverartimage.set_data(data)
+            if coverartimage.can_be_saved_to_metadata:
+                log.debug("Cover art image stored to metadata: %r [%s]" % (
+                    coverartimage,
+                    coverartimage.imageinfo_as_string())
+                )
+                self.metadata.append_image(coverartimage)
+                for track in self.album._new_tracks:
+                    track.metadata.append_image(coverartimage)
+                # If the image already was a front image,
+                # there might still be some other non-CAA front
+                # images in the queue - ignore them.
+                if not self.front_image_found:
+                    self.front_image_found = coverartimage.is_front_image()
+            else:
+                log.debug("Thumbnail for cover art image: %r [%s]" % (
+                    coverartimage,
+                    coverartimage.imageinfo_as_string())
+                )
+        except CoverArtImageIOError as e:
+            self.album.error_append(unicode(e))
+            self.album._finalize_loading(error=True)
+            raise e
+        except CoverArtImageIdentificationError as e:
+            self.album.error_append(unicode(e))
+
 
     def _coverart_downloaded(self, coverartimage, data, http, error):
         """Handle finished download, save it to metadata"""
@@ -73,41 +104,15 @@ class CoverArt:
                 echo=None
             )
             try:
-                coverartimage.set_data(data)
-                if coverartimage.can_be_saved_to_metadata:
-                    log.debug("Cover art image downloaded: %r [%s]" %
-                        (
-                            coverartimage,
-                            coverartimage.imageinfo_as_string()
-                        )
-                    )
-                    self.metadata.append_image(coverartimage)
-                    for track in self.album._new_tracks:
-                        track.metadata.append_image(coverartimage)
-                    # If the image already was a front image,
-                    # there might still be some other non-CAA front
-                    # images in the queue - ignore them.
-                    if not self.front_image_found:
-                        self.front_image_found = coverartimage.is_front_image()
-                else:
-                    log.debug("Thumbnail for cover art image downloaded: %r [%s]" %
-                        (
-                            coverartimage,
-                            coverartimage.imageinfo_as_string()
-                        )
-                    )
-            except CoverArtImageIOError as e:
-                self.album.error_append(unicode(e))
-                self.album._finalize_loading(error=True)
+                self._set_metadata(coverartimage, data)
+            except CoverArtImageIOError:
                 # It doesn't make sense to store/download more images if we can't
                 # save them in the temporary folder, abort.
                 return
-            except CoverArtImageIdentificationError as e:
-                self.album.error_append(unicode(e))
 
-        self.download_next_in_queue()
+        self.next_in_queue()
 
-    def download_next_in_queue(self):
+    def next_in_queue(self):
         """Downloads next item in queue.
            If there are none left, loading of album will be finalized.
         """
@@ -116,9 +121,9 @@ class CoverArt:
             return
 
         if (self.front_image_found and
-            config.setting["save_images_to_tags"] and not
-            config.setting["save_images_to_files"] and
-            config.setting["save_only_front_images_to_tags"]):
+                config.setting["save_images_to_tags"] and not
+                config.setting["save_images_to_files"] and
+                config.setting["save_only_front_images_to_tags"]):
             # no need to continue
             self.album._finalize_loading(None)
             return
@@ -126,18 +131,23 @@ class CoverArt:
         if self._queue_empty():
             if self.providers:
                 # requeue from next provider
-                provider, name = self.providers.pop(0)
+                provider = self.providers.pop(0)
                 ret = CoverArtProvider._STARTED
                 try:
                     p = provider(self)
                     if p.enabled():
-                        log.debug("Trying cover art provider %s ..." % name)
-                        ret = p.queue_downloads()
+                        log.debug("Trying cover art provider %s ..." %
+                                  provider.NAME)
+                        ret = p.queue_images()
                     else:
-                        log.debug("Skipping cover art provider %s ..." % name)
+                        log.debug("Skipping cover art provider %s ..." %
+                                  provider.NAME)
+                except:
+                    log.error(traceback.format_exc())
+                    raise
                 finally:
                     if ret != CoverArtProvider.WAIT:
-                        self.download_next_in_queue()
+                        self.next_in_queue()
                     return
             else:
                 # nothing more to do
@@ -151,9 +161,27 @@ class CoverArt:
             # sources
             log.debug("Skipping %r, one front image is already available",
                       coverartimage)
-            self.download_next_in_queue()
+            self.next_in_queue()
             return
 
+        # local files
+        if hasattr(coverartimage, 'filepath'):
+            data = None
+            try:
+                with open(coverartimage.filepath, 'rb') as file:
+                    self._set_metadata(coverartimage, file.read())
+            except IOError as ioexcept:
+                (errnum, errmsg) = ioexcept.args
+                log.error("Failed to read %r: %s (%d)" %
+                          (coverartimage.from_file, errmsg, errnum))
+            except CoverArtImageIOError:
+                 # It doesn't make sense to store/download more images if we can't
+                 # save them in the temporary folder, abort.
+                 return
+            self.next_in_queue()
+            return
+
+        # on the web
         self._message(
             N_("Downloading cover art of type '%(type)s' for %(albumid)s from %(host)s ..."),
             {
@@ -176,7 +204,7 @@ class CoverArt:
 
     def queue_put(self, coverartimage):
         "Add an image to queue"
-        log.debug("Queing %r for download", coverartimage)
+        log.debug("Queuing cover art image %r", coverartimage)
         self.__queue.append(coverartimage)
 
     def _queue_get(self):

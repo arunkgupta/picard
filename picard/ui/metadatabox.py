@@ -30,6 +30,8 @@ from picard.util import format_time, throttle, thread
 from picard.util.tags import display_tag_name
 from picard.ui.edittagdialog import EditTagDialog
 from picard.metadata import MULTI_VALUED_JOINER
+from picard.browser.filelookup import FileLookup
+from picard.browser.browser import BrowserIntegration
 
 
 COMMON_TAGS = [
@@ -144,7 +146,7 @@ class TagDiff(object):
 class MetadataBox(QtGui.QTableWidget):
 
     options = (
-        config.IntListOption("persist", "metadata_box_sizes", [150, 300, 300]),
+        config.Option("persist", "metadatabox_header_state", QtCore.QByteArray()),
         config.BoolOption("persist", "show_changes_first", False)
     )
 
@@ -156,6 +158,7 @@ class MetadataBox(QtGui.QTableWidget):
         self.setColumnCount(3)
         self.setHorizontalHeaderLabels((_("Tag"), _("Original Value"), _("New Value")))
         self.horizontalHeader().setStretchLastSection(True)
+        self.horizontalHeader().setResizeMode(QtGui.QHeaderView.Stretch)
         self.horizontalHeader().setClickable(False)
         self.verticalHeader().setDefaultSectionSize(21)
         self.verticalHeader().setVisible(False)
@@ -183,6 +186,33 @@ class MetadataBox(QtGui.QTableWidget):
         self.changes_first_action.setCheckable(True)
         self.changes_first_action.setChecked(config.persist["show_changes_first"])
         self.changes_first_action.toggled.connect(self.toggle_changes_first)
+        self.browser_integration = BrowserIntegration()
+
+    def get_file_lookup(self):
+        """Return a FileLookup object."""
+        return FileLookup(self, config.setting["server_host"],
+                          config.setting["server_port"],
+                          self.browser_integration.port)
+
+    def lookup_tags(self):
+        lookup = self.get_file_lookup()
+        LOOKUP_TAGS = {
+            "musicbrainz_recordingid": lookup.recordingLookup,
+            "musicbrainz_trackid": lookup.trackLookup,
+            "musicbrainz_albumid": lookup.albumLookup,
+            "musicbrainz_workid": lookup.workLookup,
+            "musicbrainz_artistid": lookup.artistLookup,
+            "musicbrainz_albumartistid": lookup.artistLookup,
+            "musicbrainz_releasegroupid": lookup.releaseGroupLookup,
+            "acoustid_id": lookup.acoustLookup
+        }
+        return LOOKUP_TAGS
+
+    def open_link(self, values, tag):
+        lookup = self.lookup_tags()
+        lookup_func = lookup[tag]
+        for v in values:
+            lookup_func(v)
 
     def edit(self, index, trigger, event):
         if index.column() != 2:
@@ -239,7 +269,18 @@ class MetadataBox(QtGui.QTableWidget):
                 menu.addAction(edit_tag_action)
             removals = []
             useorigs = []
+            item = self.currentItem()
+            column = item.column()
             for tag in tags:
+                if tag in self.lookup_tags().keys():
+                    if (column == 1 or column == 2) and len(tags) == 1 and item.text():
+                        if column == 1:
+                            values = self.tag_diff.orig[tag]
+                        else:
+                            values = self.tag_diff.new[tag]
+                        lookup_action = QtGui.QAction(_(u"Lookup in &Browser"), self.parent)
+                        lookup_action.triggered.connect(partial(self.open_link, values, tag))
+                        menu.addAction(lookup_action)
                 if self.tag_is_removable(tag):
                     removals.append(partial(self.remove_tag, tag))
                 status = self.tag_diff.status[tag] & TagStatus.Changed
@@ -462,43 +503,13 @@ class MetadataBox(QtGui.QTableWidget):
         font.setItalic(italic)
         item.setFont(font)
 
-    def _resize_column(self, i, size):
-        header = self.horizontalHeader()
-        nsize = max(size, header.sectionSizeHint(i))
-        header.resizeSection(i, nsize)
-
     def restore_state(self):
-        sizes = config.persist["metadata_box_sizes"]
+        state = config.persist["metadatabox_header_state"]
         header = self.horizontalHeader()
-        try:
-            for i in range(header.count() - 1):
-                self._resize_column(i, sizes[i])
-        except IndexError:
-            pass
-        self.resize_columns()
+        header.restoreState(state)
+        header.setResizeMode(QtGui.QHeaderView.Interactive)
 
     def save_state(self):
-        sizes = []
         header = self.horizontalHeader()
-        for i in range(header.count()):
-            sizes.append(header.sectionSize(i))
-        config.persist["metadata_box_sizes"] = sizes
-
-    def resize_columns(self):
-        header = self.horizontalHeader()
-        width = header.length()
-        ncols = header.count()
-        visible_width = self.contentsRect().width()
-        scroll = self.verticalScrollBar()
-        if scroll.isVisible():
-            width -= scroll.width()
-            visible_width -= scroll.width()
-        if width != visible_width:
-            for i in range(ncols - 1):
-                newsize = int(round((float(visible_width) * header.sectionSize(i)) / float(width)))
-                self._resize_column(i, newsize)
-
-    def resizeEvent(self, event):
-        if abs(event.size().width() - event.oldSize().width()) > self.verticalScrollBar().width():
-            self.resize_columns()
-        super(MetadataBox, self).resizeEvent(event)
+        state = header.saveState()
+        config.persist["metadatabox_header_state"] = state

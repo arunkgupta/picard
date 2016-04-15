@@ -29,7 +29,8 @@ import tempfile
 from hashlib import md5
 from PyQt4.QtCore import QUrl, QObject, QMutex
 from picard import config, log
-from picard.coverartarchive import translate_caa_type
+from picard.coverart.utils import translate_caa_type
+from picard.script import ScriptParser
 from picard.util import (
     encode_filename,
     replace_win32_incompat,
@@ -162,7 +163,7 @@ class CoverArtImage:
             return self.is_front
         if u'front' in self.types:
             return True
-        return (self.support_types == False)
+        return (self.support_types is False)
 
     def imageinfo_as_string(self):
         if self.datahash is None:
@@ -231,6 +232,7 @@ class CoverArtImage:
         return self.types[0]
 
     def _make_image_filename(self, filename, dirname, metadata):
+        filename = ScriptParser().eval(filename, metadata)
         if config.setting["ascii_filenames"]:
             if isinstance(filename, unicode):
                 filename = unaccent(filename)
@@ -256,7 +258,8 @@ class CoverArtImage:
         """
         if not self.can_be_saved_to_disk:
             return
-        if config.setting["caa_image_type_as_filename"]:
+        if (config.setting["caa_image_type_as_filename"] and
+            not self.is_front_image()):
             filename = self.maintype
             log.debug("Make cover filename from types: %r -> %r",
                       self.types, filename)
@@ -381,6 +384,36 @@ class TagCoverArtImage(CoverArtImage):
         p.append('%r' % self.sourcefile)
         if self.tag is not None:
             p.append("tag=%r" % self.tag)
+        if self.types:
+            p.append("types=%r" % self.types)
+        if self.is_front is not None:
+            p.append("is_front=%r" % self.is_front)
+        p.append('support_types=%r' % self.support_types)
+        if self.comment:
+            p.append("comment=%r" % self.comment)
+        return "%s(%s)" % (self.__class__.__name__, ", ".join(p))
+
+
+class CoverArtImageFromFile(CoverArtImage):
+
+    sourceprefix = 'LOCAL'
+
+    def __init__(self, filepath, types=[], is_front=None,
+                 support_types=False, comment='', data=None):
+        CoverArtImage.__init__(self, url=None, types=types, comment=comment,
+                               data=data)
+        self.filepath = filepath
+        self.support_types = support_types
+        if is_front is not None:
+            self.is_front = is_front
+
+    @property
+    def source(self):
+        return u'%s %s' % (self.sourceprefix, self.filepath)
+
+    def __repr__(self):
+        p = []
+        p.append('%r' % self.filepath)
         if self.types:
             p.append("types=%r" % self.types)
         if self.is_front is not None:

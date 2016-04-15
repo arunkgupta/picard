@@ -18,6 +18,7 @@
 # along with this program; if not, write to the Free Software
 # Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
 
+from __future__ import print_function
 import re
 import os
 import ntpath
@@ -125,6 +126,12 @@ class Cluster(QtCore.QObject, Item):
 
     def can_browser_lookup(self):
         return not self.special
+
+    def can_view_info(self):
+        if self.files:
+            return True
+        else:
+            return False
 
     def is_album_like(self):
         return True
@@ -284,6 +291,9 @@ class UnmatchedFiles(Cluster):
     def can_autotag(self):
         return len(self.files) > 0
 
+    def can_view_info(self):
+        return False
+
 
 class ClusterList(list, Item):
 
@@ -405,11 +415,11 @@ class ClusterEngine(object):
 
     def printCluster(self, cluster):
         if cluster < 0:
-            print "[no such cluster]"
+            print("[no such cluster]")
             return
 
         bin = self.clusterBins[cluster]
-        print cluster, " -> ", ", ".join([("'" + self.clusterDict.getWord(i) + "'") for i in bin])
+        print(cluster, " -> ", ", ".join([("'" + self.clusterDict.getWord(i) + "'") for i in bin]))
 
     def getClusterTitle(self, cluster):
 

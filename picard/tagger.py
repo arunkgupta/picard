@@ -18,6 +18,7 @@
 # along with this program; if not, write to the Free Software
 # Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
 
+from __future__ import print_function
 import sip
 
 sip.setapi("QString", 2)
@@ -25,7 +26,7 @@ sip.setapi("QVariant", 2)
 
 from PyQt4 import QtGui, QtCore
 
-import getopt
+import argparse
 import os.path
 import platform
 import re
@@ -77,7 +78,8 @@ from picard.util import (
     mbid_validate,
     check_io_encoding,
     uniqify,
-    is_hidden_path,
+    is_hidden,
+    versions,
 )
 from picard.webservice import XmlWebService
 
@@ -93,11 +95,13 @@ class Tagger(QtGui.QApplication):
 
     __instance = None
 
-    def __init__(self, args, localedir, autoupdate, debug=False):
-        QtGui.QApplication.__init__(self, args)
+    def __init__(self, picard_args, unparsed_args, localedir, autoupdate):
+        # Set the WM_CLASS to 'MusicBrainz-Picard' so desktop environments
+        # can use it to look up the app
+        QtGui.QApplication.__init__(self, ['MusicBrainz-Picard'] + unparsed_args)
         self.__class__.__instance = self
 
-        self._args = args
+        self._cmdline_files = picard_args.FILE
         self._autoupdate = autoupdate
         self._debug = False
 
@@ -134,10 +138,11 @@ class Tagger(QtGui.QApplication):
             signal.signal(signal.SIGTERM, self.signal)
 
         # Setup logging
-        self.debug(debug or "PICARD_DEBUG" in os.environ)
-        log.debug("Starting Picard %s from %r", picard.__version__, os.path.abspath(__file__))
+        self.debug(picard_args.debug or "PICARD_DEBUG" in os.environ)
+        log.debug("Starting Picard from %r", os.path.abspath(__file__))
         log.debug("Platform: %s %s %s", platform.platform(),
                   platform.python_implementation(), platform.python_version())
+        log.debug("Versions: %s", versions.as_string())
         if config.storage_type == config.REGISTRY_PATH:
             log.debug("Configuration registry path: %s", config.storage)
         else:
@@ -190,6 +195,7 @@ class Tagger(QtGui.QApplication):
         if not os.path.exists(USER_PLUGIN_DIR):
             os.makedirs(USER_PLUGIN_DIR)
         self.pluginmanager.load_plugindir(USER_PLUGIN_DIR)
+        self.pluginmanager.query_available_plugins()
 
         self.acoustidmanager = AcoustIDManager()
         self.browser_integration = BrowserIntegration()
@@ -268,16 +274,16 @@ class Tagger(QtGui.QApplication):
             f()
 
     def _run_init(self):
-        if self._args:
+        if self._cmdline_files:
             files = []
-            for file in self._args:
+            for file in self._cmdline_files:
                 if os.path.isdir(file):
                     self.add_directory(decode_filename(file))
                 else:
                     files.append(decode_filename(file))
             if files:
                 self.add_files(files)
-            del self._args
+            del self._cmdline_files
 
     def run(self):
         if config.setting["browser_integration"]:
@@ -302,11 +308,13 @@ class Tagger(QtGui.QApplication):
 
     def _file_loaded(self, file, target=None):
         if file is not None and not file.has_error():
-            recordingid = file.metadata['musicbrainz_recordingid']
+            recordingid = file.metadata.getall('musicbrainz_recordingid')[0] \
+                if 'musicbrainz_recordingid' in file.metadata else ''
             if target is not None:
                 self.move_files([file], target)
             elif not config.setting["ignore_file_mbids"]:
-                albumid = file.metadata['musicbrainz_albumid']
+                albumid = file.metadata.getall('musicbrainz_albumid')[0] \
+                    if 'musicbrainz_albumid' in file.metadata else ''
                 if mbid_validate(albumid):
                     if mbid_validate(recordingid):
                         self.move_file_to_track(file, albumid, recordingid)
@@ -337,11 +345,11 @@ class Tagger(QtGui.QApplication):
         pattern = config.setting['ignore_regex']
         if pattern:
             ignoreregex = re.compile(pattern)
-        ignore_hidden = not config.persist["show_hidden_files"]
+        ignore_hidden = config.setting["ignore_hidden_files"]
         new_files = []
         for filename in filenames:
             filename = os.path.normpath(os.path.realpath(filename))
-            if ignore_hidden and is_hidden_path(filename):
+            if ignore_hidden and is_hidden(filename):
                 log.debug("File ignored (hidden): %s" % (filename))
                 continue
             if ignoreregex is not None and ignoreregex.search(filename):
@@ -362,11 +370,14 @@ class Tagger(QtGui.QApplication):
                 file.load(partial(self._file_loaded, target=target))
 
     def add_directory(self, path):
+        ignore_hidden = config.setting["ignore_hidden_files"]
         walk = os.walk(unicode(path))
 
         def get_files():
             try:
-                root, dirs, files = walk.next()
+                root, dirs, files = next(walk)
+                if ignore_hidden:
+                    dirs[:] = [d for d in dirs if not is_hidden(os.path.join(root, d))]
             except StopIteration:
                 return None
             else:
@@ -411,7 +422,7 @@ class Tagger(QtGui.QApplication):
     def collection_lookup(self):
         """Lookup the users collections on the MusicBrainz website."""
         lookup = self.get_file_lookup()
-        lookup.collectionLookup(config.setting["username"])
+        lookup.collectionLookup(config.persist["oauth_username"])
 
     def browser_lookup(self, item):
         """Lookup the object's metadata on the MusicBrainz website."""
@@ -645,21 +656,27 @@ class Tagger(QtGui.QApplication):
         self.signalnotifier.setEnabled(True)
 
 
-def help():
-    print """Usage: %s [OPTIONS] [FILE] [FILE] ...
-
-If one of the filenames begins with a hyphen, use -- to separate the options
-from the filenames.
-
-Options:
-    -d, --debug             enable debug-level logging
-    -h, --help              display this help and exit
-    -v, --version           display version information and exit
-""" % (sys.argv[0],)
-
-
 def version():
-    print "%s %s %s" % (PICARD_ORG_NAME, PICARD_APP_NAME, PICARD_FANCY_VERSION_STR)
+    print("%s %s %s" % (PICARD_ORG_NAME, PICARD_APP_NAME, PICARD_FANCY_VERSION_STR))
+
+
+def longversion():
+    print(versions.as_string())
+
+
+def process_picard_args():
+    parser = argparse.ArgumentParser(
+        epilog="If one of the filenames begins with a hyphen, use -- to separate the options from the filenames."
+    )
+    parser.add_argument("-d", "--debug", action='store_true',
+                        help="enable debug-level logging")
+    parser.add_argument('-v', '--version', action='store_true',
+                        help="display version information and exit")
+    parser.add_argument("-V", "--long-version", action='store_true',
+                        help="display long version information and exit")
+    parser.add_argument('FILE', nargs='*')
+    picard_args, unparsed_args = parser.parse_known_args()
+    return picard_args, unparsed_args
 
 
 def main(localedir=None, autoupdate=True):
@@ -668,15 +685,13 @@ def main(localedir=None, autoupdate=True):
     QtGui.QApplication.setOrganizationName(PICARD_ORG_NAME)
 
     signal.signal(signal.SIGINT, signal.SIG_DFL)
-    opts, args = getopt.gnu_getopt(sys.argv[1:], "hvd", ["help", "version", "debug"])
-    kwargs = {}
-    for opt, arg in opts:
-        if opt in ("-h", "--help"):
-            return help()
-        elif opt in ("-v", "--version"):
-            return version()
-        elif opt in ("-d", "--debug"):
-            kwargs["debug"] = True
-    tagger = Tagger(args, localedir, autoupdate, **kwargs)
+
+    picard_args, unparsed_args = process_picard_args()
+    if picard_args.version:
+        return version()
+    if picard_args.long_version:
+        return longversion()
+
+    tagger = Tagger(picard_args, unparsed_args, localedir, autoupdate)
     tagger.startTimer(1000)
     sys.exit(tagger.run())

@@ -17,13 +17,14 @@
 # along with this program; if not, write to the Free Software
 # Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
 
+from __future__ import print_function
 import re
 import sys
 from operator import itemgetter
 from PyQt4 import QtCore
 from picard import (PICARD_APP_NAME, PICARD_ORG_NAME, PICARD_VERSION,
                     version_to_string, version_from_string)
-from picard.util import LockableObject, rot13
+from picard.util import LockableObject
 
 
 class ConfigUpgradeError(Exception):
@@ -40,19 +41,10 @@ class ConfigSection(LockableObject):
         self.__name = name
 
     def __getitem__(self, name):
-        key = "%s/%s" % (self.__name, name)
         opt = Option.get(self.__name, name)
         if opt is None:
             return None
-        self.lock_for_read()
-        try:
-            if self.__config.contains(key):
-                return opt.convert(self.raw_value(name))
-            return opt.default
-        except:
-            return opt.default
-        finally:
-            self.unlock()
+        return self.value(name, opt, opt.default)
 
     def __setitem__(self, name, value):
         self.lock_for_write()
@@ -82,6 +74,19 @@ class ConfigSection(LockableObject):
 
         return value
 
+    def value(self, name, type, default=None):
+        """Return an option value converted to the given Option type."""
+        key = "%s/%s" % (self.__name, name)
+        self.lock_for_read()
+        try:
+            if self.__config.contains(key):
+                return type.convert(self.raw_value(name))
+            return default
+        except:
+            return default
+        finally:
+            self.unlock()        
+
 
 class Config(QtCore.QSettings):
 
@@ -89,7 +94,17 @@ class Config(QtCore.QSettings):
 
     def __init__(self):
         """Initializes the configuration."""
-        QtCore.QSettings.__init__(self, PICARD_ORG_NAME, PICARD_APP_NAME)
+
+        QtCore.QSettings.__init__(self, QtCore.QSettings.IniFormat,
+                                  QtCore.QSettings.UserScope, PICARD_ORG_NAME, PICARD_APP_NAME)
+        # If there are no settings, copy existing settings from old format
+        # (registry on windows systems)
+        if not self.allKeys():
+            oldFormat = QtCore.QSettings(PICARD_ORG_NAME, PICARD_APP_NAME)
+            for k in oldFormat.allKeys():
+                self.setValue(k, oldFormat.value(k))
+            self.sync()
+
         self.application = ConfigSection(self, "application")
         self.setting = ConfigSection(self, "setting")
         self.persist = ConfigSection(self, "persist")
@@ -185,13 +200,6 @@ class Option(QtCore.QObject):
     @classmethod
     def get(cls, section, name):
         return cls.registry.get((section, name))
-
-
-class PasswordOption(Option):
-
-    """Super l33t h3ckery!"""
-
-    convert = staticmethod(rot13)
 
 
 class TextOption(Option):
